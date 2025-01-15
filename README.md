@@ -41,11 +41,11 @@ Acest script Python vă permite să transcrieți gratuit fișiere audio lungi (p
 ---
 
 ### **3. Instalează Python și bibliotecile necesare**
-În Termux, rulează următoarele comenzi:
+Instalarea bibliotecilor necesare se face de script automat, deci poți sări complet peste acest pas.
 ```bash
 pkg update && pkg upgrade
 pkg install python
-pip install SpeechRecognition pydub requests
+pip install SpeechRecognition pydub
 pkg install ffmpeg
 ```
 
@@ -54,7 +54,6 @@ Aceste comenzi instalează componentele esențiale:
 - **SpeechRecognition:** Bibliotecă utilizată pentru transcrierea audio în text.
 - **pydub:** Manipularea fișierelor audio (conversie și segmentare).
 - **FFmpeg:** Instrument pentru manipularea formatelor audio/video.
-- **Requests:** Verificarea conexiunii la internet.
 
 ---
 
@@ -164,11 +163,11 @@ This Python script allows you to transcribe long audio files (over an hour) into
 ---
 
 ### **3. Install Required Libraries**
-Run the following commands in Termux:
+This step is optional, as the installation of the required libraries is taken by the script.
 ```bash
 pkg update && pkg upgrade
 pkg install python
-pip install SpeechRecognition pydub requests
+pip install SpeechRecognition pydub
 pkg install ffmpeg
 ```
 
@@ -177,7 +176,6 @@ These libraries provide essential functionality:
 - **`SpeechRecognition`:** For converting audio into text using Google Speech Recognition.
 - **`pydub`:** For audio conversion and segmentation.
 - **`ffmpeg`:** Required for audio format handling (MP3 to WAV).
-- **`requests`:** To verify an active internet connection.
 
 ---
 
