@@ -1,77 +1,169 @@
-import os
+import subprocess
+import sys
+
+# Actualizare și upgrade pentru sistemul de operare (opțional pentru Linux/Termux)
+def update_system():
+    try:
+        print("Updating system packages...")
+        subprocess.check_call(["pkg", "update", "-y"])  # Actualizare pachete
+        subprocess.check_call(["pkg", "upgrade", "-y"])  # Upgrade pachete
+        print("System packages updated successfully.")
+    except Exception as e:
+        print(f"Error during system update: {e}")
+
+# Instalarea bibliotecilor Python necesare
+def install_package(package):
+    try:
+        __import__(package)
+    except ImportError:
+        print(f"Installing {package}...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+# Actualizează sistemul (doar pentru Termux sau Linux)
+update_system()
+
+# Instalează pachetele Python necesare
+required_packages = ["pydub", "speech_recognition"]
+for package in required_packages:
+    install_package(package)
+
+# Importurile bibliotecilor Python
 from pydub import AudioSegment
 from pydub.silence import split_on_silence
 import speech_recognition as sr
-import requests
+import urllib.request
+import os
 
+# === Funcție pentru depanare ===
+def debug_prompt(message, default="yes"):
+    """
+    Afișează un mesaj de depanare și întreabă utilizatorul dacă să continue execuția.
+    :param message: Mesajul care descrie ce urmează să fie executat.
+    :param default: Valoarea implicită dacă utilizatorul doar apasă Enter ('yes' sau 'no').
+    :return: True dacă execuția trebuie să continue, False altfel.
+    """
+    valid_responses = {"yes": True, "y": True, "no": False, "n": False}
+    prompt = f"{message} (yes/[no]): " if default == "no" else f"{message} ([yes]/no): "
+    while True:
+        user_input = input(prompt).strip().lower()
+        if not user_input:  # Implicit
+            return valid_responses[default]
+        elif user_input in valid_responses:
+            return valid_responses[user_input]
+        else:
+            print("Please respond with 'yes' or 'no' (or 'y' or 'n').")
 
+# === Funcție pentru verificarea existenței fișierului ===
+def check_file_exists(file_path):
+    if not os.path.exists(file_path):
+        print(f"Error: The file '{file_path}' does not exist.")
+        sys.exit(1)
+
+# === Funcție pentru verificarea conexiunii la internet ===
 def check_internet_connection():
-    """
-    Verifică dacă există conexiune la internet.
-    """
     try:
-        requests.get("https://www.google.com", timeout=5)
+        urllib.request.urlopen("https://www.google.com", timeout=5)
         print("Internet connection available.")
         return True
     except requests.ConnectionError:
         print("No internet connection. Please connect to the internet and try again.")
         return False
 
+def get_file_size(file_path):
+    """
+    Returnează dimensiunea unui fișier în MB.
+    :param file_path: Calea către fișier.
+    :return: Dimensiunea fișierului în MB (float).
+    """
+    try:
+        size_in_bytes = os.path.getsize(file_path)
+        size_in_mb = size_in_bytes / (1024 * 1024)  # Conversie la MB
+        return round(size_in_mb, 2)  # Rotunjire la 2 zecimale
+    except Exception as e:
+        print(f"Error getting file size: {e}")
+        return None
 
+# === Funcție pentru împărțirea segmentelor mari ===
 def split_large_chunk(chunk, max_duration=2 * 60 * 1000, overlap=5000):
     """
-    Împarte un chunk mare în bucăți mai mici cu o durată maximă specificată.
-    :param chunk: Chunk-ul AudioSegment de procesat.
-    :param max_duration: Durata maximă în milisecunde.
-    :param overlap: Suprapunerea între bucăți în milisecunde.
-    :return: Listă de bucăți AudioSegment.
+    Împarte un segment mare în bucăți mai mici, fiecare având o suprapunere.
+    Se oprește dacă segmentul curent este mai mic decât overlap.
     """
     segments = []
     start = 0
     while start < len(chunk):
         end = min(start + max_duration, len(chunk))
-        segments.append(chunk[start:end])
-        start = end - overlap  # Suprapunere între bucăți
+        segment_duration = end - start
+        if segment_duration <= overlap:
+            print(f"Skipping segment from {start} ms to {end} ms (too small: {segment_duration} ms).")
+            break  # Oprire dacă segmentul este mai mic decât overlap-ul
+        segment = chunk[start:end]
+        print(f"Creating segment from {start} ms to {end} ms.")
+#        if not debug_prompt(f"Ready to process segment {start}-{end} ms. Continue?"):
+#            print("Execution stopped at segment creation.")
+#            return segments
+        segments.append(segment)
+        start = end - overlap  # Suprapunerea asigură continuitatea
     return segments
 
-
+# === Funcție pentru crearea fișierelor WAV și segmentare ===
 def wav_creation(mp3_file_path):
     """
     Creează chunk-uri WAV dintr-un fișier MP3, respectând regulile de durată minimă și maximă.
     """
     mp3_file_path = os.path.expanduser(mp3_file_path)
+    check_file_exists(mp3_file_path)  # Verifică dacă fișierul există
     base_name = os.path.splitext(os.path.basename(mp3_file_path))[0]
     wav_folder = os.path.splitext(mp3_file_path)[0]  # Director pentru chunk-uri WAV
     full_wav_path = f"{os.path.splitext(mp3_file_path)[0]}.wav"  # Fisier WAV complet
 
-    # Verifică dacă fișierul complet WAV există
+    # Conversie MP3 → WAV complet
     if not os.path.exists(full_wav_path):
-        print("Converting MP3 to full WAV...")
+        print(f"Converting MP3 file '{os.path.basename(mp3_file_path)}' to full WAV...")
+#        if not debug_prompt(f"Ready to create the full WAV file from '{os.path.basename(mp3_file_path)}'. Continue?"):
+#            print("Execution stopped at full WAV creation.")
+#            return
         AudioSegment.from_file(mp3_file_path).export(full_wav_path, format="wav")
+        print(f"Full WAV file '{os.path.basename(full_wav_path)}' created.")
     else:
-        print(f"Full WAV file '{os.path.basename(full_wav_path)}' already exists. Skipping creation.")
+        file_size = get_file_size(full_wav_path)
+        size_info = f"{file_size} MB" if file_size else "unknown size"
+        print(f"Full WAV file '{os.path.basename(full_wav_path)}' already exists ({size_info}). Skipping creation.")
+
+    # Încărcare fișier WAV complet
+    file_size = get_file_size(full_wav_path)
+    size_info = f"{file_size} MB" if file_size else "unknown size"
+    print(f"Loading full WAV file '{os.path.basename(full_wav_path)}' ({size_info}) into memory...")
+#    if not debug_prompt(f"Ready to load the full WAV file '{os.path.basename(full_wav_path)}' ({size_info}) into memory. Continue?"):
+#        print("Execution stopped at loading full WAV into memory.")
+#        return
+    audio = AudioSegment.from_file(full_wav_path)
+    print(f"Full WAV file '{os.path.basename(full_wav_path)}' ({size_info}) loaded into memory.")
 
     # Verifică dacă dosarul pentru chunk-uri există
     if os.path.exists(wav_folder):
         print(f"Folder '{wav_folder}' already exists. Skipping chunk creation.")
         return
 
-    # Creează dosarul pentru chunk-uri WAV
-    os.makedirs(wav_folder)
-
-    # Încărcare fișier WAV complet
-    audio = AudioSegment.from_file(full_wav_path)
-
-    # Segmentarea pe baza pauzelor naturale
+    # Segmentare pe baza pauzelor naturale
+    print("Splitting audio into chunks based on silence...")
+#    if not debug_prompt("Ready to split the audio into chunks based on silence. Continue?"):
+#        print("Execution stopped at chunk splitting.")
+#        return
     chunks = split_on_silence(
         audio,
-        min_silence_len=500,  # Pauze de cel puțin 0.5 secunde
-        silence_thresh=-40    # Prag de tăcere la -40 dB
+        min_silence_len=500,
+        silence_thresh=-40
     )
+    print(f"{len(chunks)} chunks created in memory.")
 
-    # Reguli de combinare: minim 20 secunde, maxim 2 minute
-    min_chunk_length = 20 * 1000  # 20 secunde în milisecunde
-    max_chunk_length = 2 * 60 * 1000  # 2 minute în milisecunde
+    # Crearea chunk-urilor combinate
+    print("Combining chunks based on length...")
+#    if not debug_prompt("Ready to combine chunks into larger segments. Continue?"):
+#        print("Execution stopped at chunk combining.")
+#        return
+    min_chunk_length = 20 * 1000
+    max_chunk_length = 2 * 60 * 1000
     combined_chunks = []
     current_chunk = AudioSegment.silent(duration=0)
 
@@ -82,38 +174,35 @@ def wav_creation(mp3_file_path):
             combined_chunks.append(current_chunk)
             current_chunk = chunk
 
-    # Adaugă ultima bucată, dacă există
     if len(current_chunk) > 0:
         combined_chunks.append(current_chunk)
+    print(f"{len(combined_chunks)} combined chunks created in memory.")
 
-    # Asigurare că fiecare chunk are minim 20 secunde
+    # Împărțirea chunk-urilor mari
+    print("Splitting large chunks into smaller segments...")
+#    if not debug_prompt("Ready to split large chunks into smaller segments. Continue?"):
+#        print("Execution stopped at large chunk splitting.")
+#        return
     final_chunks = []
-    current_chunk = AudioSegment.silent(duration=0)
     for chunk in combined_chunks:
-        if len(current_chunk) + len(chunk) < min_chunk_length:
-            current_chunk += chunk
-        else:
-            final_chunks.append(current_chunk)
-            current_chunk = chunk
-
-    if len(current_chunk) > 0:
-        final_chunks.append(current_chunk)
-
-    # Împarte chunk-urile mai mari de 2 minute
-    final_processed_chunks = []
-    for chunk in final_chunks:
         if len(chunk) > max_chunk_length:
-            final_processed_chunks.extend(split_large_chunk(chunk, max_duration=max_chunk_length, overlap=5000))
+            final_chunks.extend(split_large_chunk(chunk, max_duration=max_chunk_length, overlap=5000))
         else:
-            final_processed_chunks.append(chunk)
+            final_chunks.append(chunk)
+    print(f"{len(final_chunks)} final chunks created in memory.")
 
-    # Exportă fișierele WAV și afișează doar numele fișierului
-    for i, chunk in enumerate(final_processed_chunks, start=1):
+    # Crearea directorului pentru WAV chunks
+    print(f"Creating directory '{wav_folder}' for WAV chunks...")
+    os.makedirs(wav_folder)
+
+    # Export chunk-uri WAV
+    print(f"Exporting {len(final_chunks)} chunks to directory '{wav_folder}'...")
+    for i, chunk in enumerate(final_chunks, start=1):
         chunk_name = f"{wav_folder}/{i:03}.wav"
         chunk.export(chunk_name, format="wav")
         print(f"Exported: {os.path.basename(chunk_name)}")
 
-
+# === Funcție pentru transcriere ===
 def txt_creation(mp3_file_path):
     """
     Transcrie fișierele WAV dintr-un dosar și salvează textul într-un fișier TXT.
@@ -123,12 +212,10 @@ def txt_creation(mp3_file_path):
 
     mp3_file_path = os.path.expanduser(mp3_file_path)
     base_name = os.path.splitext(os.path.basename(mp3_file_path))[0]
-    wav_folder = os.path.splitext(mp3_file_path)[0]  # Directorul pentru chunk-uri WAV
-    txt_file_path = f"{os.path.splitext(mp3_file_path)[0]}.txt"  # Fisierul TXT final
+    wav_folder = os.path.splitext(mp3_file_path)[0]
+    txt_file_path = f"{os.path.splitext(mp3_file_path)[0]}.txt"
 
     recognizer = sr.Recognizer()
-
-    # Găsește toate fișierele WAV din dosar
     wav_files = sorted(
         [f for f in os.listdir(wav_folder) if f.endswith(".wav")],
         key=lambda x: os.path.getctime(os.path.join(wav_folder, x))
@@ -137,14 +224,20 @@ def txt_creation(mp3_file_path):
     with open(txt_file_path, "w", encoding="utf-8") as output_file:
         for i, wav_file in enumerate(wav_files, start=1):
             wav_path = os.path.join(wav_folder, wav_file)
+            
+            # Verifică dacă chunk-ul a fost deja procesat
+            if os.path.exists(wav_path) and os.path.getsize(wav_path) == 0:
+                print(f"Skipping empty chunk: {wav_file}")
+                continue
+            
             duration = AudioSegment.from_file(wav_path).duration_seconds
-
             print(f"Processing {i}/{len(wav_files)} - Duration: {duration:.2f} seconds")
+            
             try:
                 with sr.AudioFile(wav_path) as source:
                     audio_data = recognizer.record(source)
                     text_output = recognizer.recognize_google(audio_data, language="ro-RO")
-                    output_file.write(text_output + "\n")  # Scrie textul cu linie nouă între segmente
+                    output_file.write(text_output + "\n")
             except Exception as e:
                 print(f"Error processing {wav_file}: {e}")
                 output_file.write("\n")  # Scrie o linie goală dacă apare o eroare
