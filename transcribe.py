@@ -1,8 +1,30 @@
+"""
+AUDIO-TRANSCRIPTION-SCRIPT for Android
+https://github.com/IonutOjicaDE/Audio-Transcription-Script
+Ionut Ojica 18.01.2025
+
+Automatic transcription of long audio files into text using Python and Google Speech Recognition.
+
+1. Install Termux from PlayStore
+2. Grant Storage Permissions executing in Termux: termux-setup-storage
+3. Navigate to the folder where the mp3 files are
+4. Execute
+wget -q -O transcribe.py https://raw.githubusercontent.com/IonutOjicaDE/Audio-Transcription-Script/main/transcribe.py && python transcribe.py
+5. Choose the files you want and enjoy!
+"""
+
 import subprocess
 import sys
+import os
+import shutil
+from datetime import datetime
 
-# Actualizare și upgrade pentru sistemul de operare (opțional pentru Linux/Termux)
+# Funcție pentru actualizare și upgrade pachete de sistem (doar dacă e nevoie)
 def update_system():
+    """
+    Actualizează și upgradează pachetele de sistem.
+    Este apelată doar dacă lipsește o bibliotecă Python.
+    """
     try:
         print("Updating system packages...")
         subprocess.check_call(["pkg", "update", "-y"])  # Actualizare pachete
@@ -11,21 +33,37 @@ def update_system():
     except Exception as e:
         print(f"Error during system update: {e}")
 
-# Instalarea bibliotecilor Python necesare
-def install_package(package):
-    try:
-        __import__(package)
-    except ImportError:
-        print(f"Installing {package}...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+# Verifică și instalează pachetele necesare
+def check_and_install_packages(required_packages):
+    """
+    Verifică dacă toate pachetele necesare sunt instalate. Dacă lipsește unul,
+    se execută update/upgrade și se instalează toate pachetele necesare.
+    """
+    missing_packages = []
+    for package in required_packages:
+        try:
+            __import__(package)
+        except ImportError:
+            missing_packages.append(package)
 
-# Actualizează sistemul (doar pentru Termux sau Linux)
-update_system()
+    if missing_packages:
+        print(f"Missing packages detected: {', '.join(missing_packages)}")
+        update_system()  # Execută update/upgrade doar dacă lipsesc pachete
+        for package in missing_packages:
+            print(f"Installing {package}...")
+            try:
+                subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+                print(f"{package} installed successfully.")
+            except Exception as e:
+                print(f"Error installing {package}: {e}")
+    else:
+        print("All required packages are already installed.")
 
-# Instalează pachetele Python necesare
+# Lista pachetelor necesare
 required_packages = ["pydub", "speech_recognition"]
-for package in required_packages:
-    install_package(package)
+
+# Verifică și instalează pachetele necesare
+check_and_install_packages(required_packages)
 
 # Importurile bibliotecilor Python
 from pydub import AudioSegment
@@ -33,6 +71,7 @@ from pydub.silence import split_on_silence
 import speech_recognition as sr
 import urllib.request
 import os
+
 
 # === Funcție pentru depanare ===
 def debug_prompt(message, default="yes"):
@@ -244,8 +283,105 @@ def txt_creation(mp3_file_path):
 
     print(f"Transcription saved to {txt_file_path}")
 
+# === Funcția pentru listarea și analiza fișierelor ===
+def analyze_files():
+    """
+    Analizează toate fișierele și dosarele din directorul curent, verificând starea lor:
+    - Fișiere MP3
+    - Fișiere WAV complete
+    - Dosare de chunk-uri
+    - Fișiere TXT (subtitrări)
+    Returnează o listă cu informațiile găsite și afișează în format de listă pentru ecrane înguste.
+    """
+    current_dir = os.getcwd()  # Calea curentă
+    print(f"Current directory: {current_dir}\n")
 
-# Exemplu de utilizare
-mp3_file_path = "~/storage/music/rec/FisierulTau.mp3"
-wav_creation(mp3_file_path)  # Creează chunk-urile WAV
-txt_creation(mp3_file_path)  # Transcrie chunk-urile WAV
+    files_data = []  # Listă pentru stocarea informațiilor despre fișiere
+
+    for file in os.listdir(current_dir):
+        if file.endswith(".mp3"):  # Găsește toate fișierele MP3
+            base_name = os.path.splitext(file)[0]
+            full_wav = f"{base_name}.wav"
+            chunk_dir = base_name
+            subtitle = f"{base_name}.txt"
+
+            files_data.append({
+                "mp3": file,
+                "full_wav": os.path.exists(full_wav),
+                "chunk_dir": os.path.exists(chunk_dir),
+                "subtitle": os.path.exists(subtitle)
+            })
+
+    # Afișare în format de listă
+    print("List of MP3 files and their status:\n")
+    for idx, file_data in enumerate(files_data, start=1):
+        wav_status = "1" if file_data["full_wav"] else "0"
+        chunk_status = "1" if file_data["chunk_dir"] else "0"
+        subtitle_status = "1" if file_data["subtitle"] else "0"
+        print(f"{idx}. {file_data['mp3']} (WAV: {wav_status} Chunks: {chunk_status} SUB: {subtitle_status})")
+
+    return files_data
+
+# === Funcția pentru procesarea fișierelor selectate ===
+def process_files(files_data):
+    """
+    Permite utilizatorului să selecteze fișierele MP3 pentru procesare și execută acțiunile.
+    """
+    choices = input("Enter your choice (e.g., '1', '1,2', '*', or press Enter to process unprocessed files): ").strip()
+
+    # Dacă utilizatorul doar apasă Enter
+    if not choices:
+        print("Processing unprocessed files...")
+        # Obține o listă de fișiere neprocesate (fără subtitrare)
+        unprocessed_files = [data for data in files_data if not data["subtitle"]]
+        files_to_process = unprocessed_files
+    elif choices in ["*", "all", "toate"]:
+        print("Processing all files...")
+        files_to_process = files_data
+    else:
+        # Interpretăm opțiunile utilizatorului
+        try:
+            selected_indices = [int(x.strip()) - 1 for x in choices.replace(",", " ").split()]
+            files_to_process = [files_data[i] for i in selected_indices if 0 <= i < len(files_data)]
+        except ValueError:
+            print("Invalid input. Please enter numbers separated by commas or spaces.")
+            return
+
+    # Procesarea fiecărui fișier selectat
+    for file_data in files_to_process:
+        mp3_file = file_data["mp3"]
+        base_name = os.path.splitext(mp3_file)[0]
+        full_wav = f"{base_name}.wav"
+        chunk_dir = base_name
+        subtitle = f"{base_name}.txt"
+
+        # Dacă opțiunea este "all", mutăm fișierele existente în backup
+        if choices in ["*", "all", "toate"]:
+            backup_dir = "bak"
+            os.makedirs(backup_dir, exist_ok=True)
+            timestamp = datetime.now().strftime("_%y%m%d_%H%M%S")
+
+            if os.path.exists(full_wav):
+                shutil.move(full_wav, os.path.join(backup_dir, f"{base_name}{timestamp}.wav"))
+                print(f"Moved '{full_wav}' to backup.")
+            if os.path.exists(chunk_dir):
+                shutil.move(chunk_dir, os.path.join(backup_dir, f"{base_name}{timestamp}"))
+                print(f"Moved '{chunk_dir}' to backup.")
+            if os.path.exists(subtitle):
+                shutil.move(subtitle, os.path.join(backup_dir, f"{base_name}{timestamp}.txt"))
+                print(f"Moved '{subtitle}' to backup.")
+
+        # Creare fișiere WAV și chunk-uri
+        print(f"Processing '{mp3_file}'...")
+        wav_creation(mp3_file)
+        txt_creation(mp3_file)
+
+    print("Processing complete!")
+
+# === Main script ===
+if __name__ == "__main__":
+    # Analizează fișierele din directorul curent
+    files_data = analyze_files()
+
+    # Procesează fișierele selectate
+    process_files(files_data)
