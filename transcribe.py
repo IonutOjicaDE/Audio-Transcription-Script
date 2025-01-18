@@ -104,7 +104,7 @@ def check_internet_connection():
         urllib.request.urlopen("https://www.google.com", timeout=5)
         print("Internet connection available.")
         return True
-    except requests.ConnectionError:
+    except:
         print("No internet connection. Please connect to the internet and try again.")
         return False
 
