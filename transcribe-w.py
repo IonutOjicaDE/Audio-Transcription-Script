@@ -13,11 +13,18 @@ Prerequisites (install before running):
    winget install -e --id Python.Python.3.12
 2. Internet connection
 
-Optional (script can try to install if missing):
+Quick run (Command Prompt):
+curl -L -o transcribe.py https://raw.githubusercontent.com/IonutOjicaDE/Audio-Transcription-Script/main/transcribe-w.py && py -3 transcribe.py
+
+Quick run (PowerShell):
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/IonutOjicaDE/Audio-Transcription-Script/main/transcribe-w.py -OutFile transcribe.py; py -3 .\transcribe.py
+
+Script will ensure/upgrade pip and install required packages:
 - FFmpeg (needed by pydub)
-- Python packages: pydub, speech_recognition
+- Python packages: pydub, SpeechRecognition
 """
 
+import math
 import os
 import shutil
 import subprocess
@@ -27,8 +34,13 @@ from datetime import datetime
 # Lista extensiilor acceptate (poți adăuga altele aici)
 SUPPORTED_EXTENSIONS = [".mp3", ".mp4", ".avi"]
 
+# Normalizare audio: "none", "peak", "rms"
+NORMALIZATION_MODE = "peak"
+TARGET_RMS_DBFS = -20.0
+SAVE_NORMALIZED_AUDIO = True
+
 # Lista pachetelor necesare
-REQUIRED_PACKAGES = ["pydub", "speech_recognition"]
+REQUIRED_PACKAGES = ["pydub", "SpeechRecognition"]
 
 # === Utilitare de instalare/validare ===
 
@@ -39,15 +51,18 @@ def has_command(command):
 def ensure_pip_available():
     """
     Verifică dacă pip este disponibil. Dacă nu, încearcă să-l instaleze prin ensurepip.
-    Pe Windows 11, `python -m pip` funcționează dacă Python este instalat corect.
+    Dacă pip există, încearcă să-l actualizeze.
+    Pe Windows 11, `py -3 -m pip` funcționează dacă Python este instalat corect.
     """
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "--version"])
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
         return True
     except Exception:
         try:
             subprocess.check_call([sys.executable, "-m", "ensurepip", "--upgrade"])
             subprocess.check_call([sys.executable, "-m", "pip", "--version"])
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
             return True
         except Exception as exc:
             print(f"pip is not available. Please install/repair Python (pip included). Error: {exc}")
@@ -101,7 +116,7 @@ def ensure_ffmpeg():
             print("FFmpeg installed successfully.")
             return True
 
-        print("FFmpeg still not found. Please add it to PATH.")
+        print("FFmpeg still not found. Please restart your terminal or add it to PATH.")
         return False
 
     print("winget not found. Please install FFmpeg manually and add it to PATH.")
@@ -117,6 +132,7 @@ if not ensure_ffmpeg():
 
 # Importuri după instalare
 from pydub import AudioSegment
+from pydub.effects import normalize
 from pydub.silence import split_on_silence
 import speech_recognition as sr
 import urllib.request
@@ -255,8 +271,43 @@ def chunks_creation_based_silence(audio):
         min_silence_len=500,
         silence_thresh=-40
     )
+    if not chunks:
+        print("No silence-based chunks detected. Using full audio as a single chunk.")
+        return [audio]
     print(f"{len(chunks)} chunks created based on silence.")
     return chunks
+
+
+def normalize_audio(audio, mode=NORMALIZATION_MODE, target_rms_dbfs=TARGET_RMS_DBFS):
+    """
+    Normalizează audio folosind peak normalization sau RMS (în dBFS).
+    """
+    if mode == "none":
+        return audio
+    if mode == "peak":
+        return normalize(audio)
+    if mode == "rms":
+        if math.isinf(audio.dBFS):
+            return audio
+        change_in_db = target_rms_dbfs - audio.dBFS
+        return audio.apply_gain(change_in_db)
+    print(f"Unknown normalization mode '{mode}'. Skipping normalization.")
+    return audio
+
+
+def save_normalized_audio(audio, source_file_path):
+    """
+    Salvează audio-ul normalizat cu sufixul "-norm" lângă fișierul sursă.
+    """
+    if not SAVE_NORMALIZED_AUDIO:
+        return
+    base_path, _ = os.path.splitext(source_file_path)
+    output_path = f"{base_path}-norm.wav"
+    try:
+        audio.export(output_path, format="wav")
+        print(f"Normalized audio saved to {output_path}")
+    except Exception as exc:
+        print(f"Error saving normalized audio: {exc}")
 
 
 def chunks_creation_based_duration(chunks, max_duration=2 * 60 * 1000, overlap=5000):
@@ -265,16 +316,35 @@ def chunks_creation_based_duration(chunks, max_duration=2 * 60 * 1000, overlap=5
     """
     print("Splitting large chunks into smaller segments...")
     final_chunks = []
+    master_chunk = None
     for chunk in chunks:
+        if len(chunk) <= max_duration:
+            if master_chunk is None:
+                master_chunk = chunk
+            elif len(master_chunk) + len(chunk) <= max_duration:
+                master_chunk += chunk
+            else:
+                final_chunks.append(master_chunk)
+                master_chunk = chunk
+            continue
+
+        if master_chunk is not None:
+            final_chunks.append(master_chunk)
+            master_chunk = None
+
         start = 0
         while start < len(chunk):
             end = min(start + max_duration, len(chunk))
             segment = chunk[start:end]
-            if len(segment) <= overlap:
+            if len(segment) <= overlap and end < len(chunk):
                 print(f"Skipping segment from {start} ms to {end} ms (too small).")
                 break
             final_chunks.append(segment)
+            if end >= len(chunk):
+                break
             start = end - overlap
+    if master_chunk is not None:
+        final_chunks.append(master_chunk)
     print(f"{len(final_chunks)} final chunks created based on duration.")
     return final_chunks
 
@@ -434,6 +504,8 @@ def process_files(files_data):
         # Creare fișiere WAV și chunk-uri
         print(f"Processing '{source_file}'...")
         audio, base_name = full_wav_creation(source_file)  # Creează și încarcă fișierul WAV complet
+        audio = normalize_audio(audio)
+        save_normalized_audio(audio, source_file)
         silence_chunks = chunks_creation_based_silence(audio)  # Creează segmente pe baza pauzelor naturale
         final_chunks = chunks_creation_based_duration(silence_chunks)  # Creează segmente pe baza duratei maxime
         chunks_export(final_chunks, base_name)  # Exportă segmentele audio
